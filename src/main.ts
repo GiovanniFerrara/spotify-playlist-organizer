@@ -91,15 +91,19 @@ app.post('/playlist', async (req, res) => {
     });
 
     const organizedPlaylists = JSON.parse(completion.message.content);
-
-    for (const playlist of organizedPlaylists) {
+    console.log(organizedPlaylists)
+    for (const playlist of organizedPlaylists.playlists) {
       const songIds = playlist.songs.map(song => `spotify:track:${song.id}`);
       await spotifyApi.addTracksToPlaylist(playlist.id, songIds);
   }
 
-  res.send('Playlists created!');
+  res.send(organizedPlaylists);
   } catch (err) {
-    res.redirect('/login');
+    if (err.statusCode === 401) {
+      res.redirect('/login');
+    }
+
+    res.send(err.message);
   }
 });
 

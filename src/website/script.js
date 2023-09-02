@@ -9,7 +9,7 @@ document.addEventListener("DOMContentLoaded", function() {
       <label for="playlist-name" class="form-label">Playlist Name</label>
       <input type="text" class="form-control" id="playlist-name" required>
       <label for="playlist-description" class="form-label">Playlist Description</label>
-      <input type="text" class="form-control" id="playlist-description" required>
+      <input type="text" class="form-control" id="playlist-description">
     `;
     playlistForm.insertBefore(newPlaylist, addPlaylistButton);
   });

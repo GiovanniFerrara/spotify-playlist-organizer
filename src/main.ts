@@ -6,6 +6,10 @@ import { createChatCompletion } from './openai';
 import { SUPER_PROMPT } from './constants';
 configDotenv();
 
+interface Response<T> {
+  body: T;
+}
+
 const app = express();
 
 app.use(bodyParser.json());
@@ -48,16 +52,10 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-app.post('/playlist', async (req, res) => {
+async function createPlaylists(
+  playlistsToCreate: { name: string; description: string }[],
+): Promise<Response<SpotifyApi.CreatePlaylistResponse>[]> {
   try {
-    const { body: playlistsToCreate } = req as {
-      body: { name: string; description: string }[];
-    };
-    const savedTracks = await spotifyApi.getMySavedTracks({
-      limit: 50,
-      offset: 0,
-    });
-
     const playlistsCreatedPromises = playlistsToCreate.map(async (playlist) => {
       return spotifyApi.createPlaylist(playlist.name, {
         description: playlist.description,
@@ -65,9 +63,35 @@ app.post('/playlist', async (req, res) => {
       });
     });
 
-    const playlistsCreated = await Promise.all(playlistsCreatedPromises);
+    return Promise.all(playlistsCreatedPromises);
+  } catch (err) {
+    console.log({ playlistsToCreate, err });
+    throw err;
+  }
+}
 
-    const completion = await createChatCompletion({
+async function addMySavedTracksToPlaylist(
+  playlistsCreated: { body: SpotifyApi.CreatePlaylistResponse }[],
+  options: { limit: number; offset: number },
+): Promise<SpotifyApi.UsersSavedTracksResponse> {
+  const { limit, offset } = options;
+
+  console.log('Getting saved tracks', { limit, offset })
+
+  let savedTracks = null;
+  try {
+    savedTracks = await spotifyApi.getMySavedTracks({
+      limit,
+      offset,
+    });
+  } catch (err) {
+    console.log('Error getting saved tracks', err);
+    throw err;
+  }
+
+  let aiOrganizedPlaylists = null;
+  try {
+    aiOrganizedPlaylists = await createChatCompletion({
       messages: [
         {
           content: SUPER_PROMPT,
@@ -89,16 +113,63 @@ app.post('/playlist', async (req, res) => {
         },
       ],
     });
-
-    const organizedPlaylists = JSON.parse(completion.message.content);
-    console.log(organizedPlaylists)
-    for (const playlist of organizedPlaylists.playlists) {
-      const songIds = playlist.songs.map(song => `spotify:track:${song.id}`);
-      await spotifyApi.addTracksToPlaylist(playlist.id, songIds);
+  } catch (err) {
+    console.log('Error creating chat completion', err);
+    throw err;
   }
 
-  res.send(organizedPlaylists);
+  const organizedPlaylists = JSON.parse(aiOrganizedPlaylists.message.content);
+
+  try {
+    for (const playlist of organizedPlaylists.playlists) {
+      const songIds = playlist.songs.map((song) => `spotify:track:${song.id}`);
+      await spotifyApi.addTracksToPlaylist(playlist.id, songIds);
+    }
+
+    return savedTracks.body;
   } catch (err) {
+    console.log('Error adding tracks to playlist', err);
+    throw err;
+  }
+}
+
+app.post('/playlist', async (req, res) => {
+  const step = 50;
+  try {
+    const { body: playlistsToCreate } = req as {
+      body: { name: string; description: string }[];
+    };
+
+    const playlistsCreated = await createPlaylists(playlistsToCreate);
+
+    let savedSongsCountInGivenStep = null;
+    let offset = 0;
+
+    while (
+      savedSongsCountInGivenStep > 0 ||
+      savedSongsCountInGivenStep === null
+    ) {
+      console.log({
+        savedSongsCountInGivenStep,
+        offset,
+        limit: step,
+      });
+      const savedSongsInCurrentStep = await addMySavedTracksToPlaylist(
+        playlistsCreated,
+        {
+          limit: step,
+          offset,
+        },
+      );
+
+      savedSongsCountInGivenStep = savedSongsInCurrentStep.items.length;
+      offset += step;
+
+    }
+
+    res.send({ savedCount: offset * step });
+  } catch (err) {
+    console.log(err);
     if (err.statusCode === 401) {
       res.redirect('/login');
     }
@@ -106,7 +177,6 @@ app.post('/playlist', async (req, res) => {
     res.send(err.message);
   }
 });
-
 
 // handle the website routes
 app.get('/', async (_req, res) => {

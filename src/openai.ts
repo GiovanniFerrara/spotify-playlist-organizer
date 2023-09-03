@@ -21,6 +21,7 @@ export async function createChatCompletion({
       ...options,
     });
 
+    console.log('OpenAI response', response.choices[0].message)
     return response.choices[0];
   } catch (error) {
     return handleError({

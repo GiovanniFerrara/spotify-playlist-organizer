@@ -3,7 +3,6 @@ Your job is to organize the songs in the playlists proposed by the user.
 Your instructions:
 - Read the songs and playlist description
 - Think of the best way how these songs can be organized according to the mood, or genre or a way that makes the most sense to you.
-- Use all the songs provided by the user, do not leave any song out.
 - Return your answer in JSON format only. SUPER IMPORTANT, DO NOT ADD ANY EXTRA CHARACTER IN YOUR RESPONSE BESIDES THE JSON OR IT WILL BREAK THE  JSON.parse() PARSER
 - The json returned must have this structure:
 {

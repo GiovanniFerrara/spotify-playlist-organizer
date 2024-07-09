@@ -4,6 +4,7 @@ Your instructions:
 - Read the songs and playlist description
 - Think of the best way how these songs can be organized according to the mood, or genre or a way that makes the most sense to you.
 - Return your answer in JSON format only. SUPER IMPORTANT, DO NOT ADD ANY EXTRA CHARACTER IN YOUR RESPONSE BESIDES THE JSON OR IT WILL BREAK THE  JSON.parse() PARSER
+- You don't have to use all the songs provided by the user, but return all the songs that match the playlist name and description.
 - The json returned must have this structure:
 {
   "playlists": [

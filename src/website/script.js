@@ -27,6 +27,14 @@ document.addEventListener("DOMContentLoaded", function() {
   });
 });
 
+const logoutButton = document.querySelector('#logout');
+  if (logoutButton) {
+    logoutButton.addEventListener('click', function(event) {
+      event.preventDefault();
+      handleLogout();
+    });
+  }
+
 function sendCollectedData(playlists){
   fetch('http://localhost:3000/playlist', {
     method: 'POST',
@@ -40,5 +48,27 @@ function sendCollectedData(playlists){
   })
   .then(function(data) {
     console.log(data);
+  });
+}
+
+function handleLogout() {
+  fetch('/logout', {
+    method: 'GET',
+  })
+  .then(function(response) {
+    return response.json();
+  })
+  .then(function(data) {
+    if(data.success) {
+      // Open Spotify logout in a new tab
+      window.open('https://www.spotify.com/logout/', '_blank');
+      // Redirect the current page to login
+      window.location.href = '/login';
+    } else {
+      console.error('Logout failed');
+    }
+  })
+  .catch(function(error) {
+    console.error('Error:', error);
   });
 }

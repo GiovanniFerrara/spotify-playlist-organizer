@@ -4,6 +4,7 @@ import { configDotenv } from 'dotenv';
 import bodyParser from 'body-parser';
 import { createChatCompletion } from './openai';
 import { SUPER_PROMPT } from './constants';
+
 configDotenv();
 
 interface Response<T> {
@@ -31,11 +32,17 @@ app.get('/login', (_req, res) => {
     'playlist-modify-private',
     'playlist-read-private',
   ];
-  const authorizeURL = spotifyApi.createAuthorizeURL(
-    scopes,
-    'Development mode',
-  );
-  res.redirect(authorizeURL);
+  try{
+    console.log('Attempting to get access token');
+    const authorizeURL = spotifyApi.createAuthorizeURL(
+      scopes,
+      'Development mode',
+    );
+    console.log('Created authorization URL');
+    res.redirect(authorizeURL);
+  } catch (err) {
+    console.error('Error creating authorization URL', err);
+  }
 });
 
 app.get('/callback', async (req, res) => {
@@ -70,8 +77,12 @@ async function createPlaylists(
   }
 }
 
-function songPropertiesMapper(mergedTrack: SpotifyApi.AudioFeaturesObject & Omit<SpotifyApi.TrackObjectFull, 'type'>){
-   return ({
+function songPropertiesMapper(
+  mergedTrack: SpotifyApi.AudioFeaturesObject &
+    Omit<SpotifyApi.TrackObjectFull, 'type'>,
+) {
+  return {
+    id: mergedTrack.id,
     name: mergedTrack.name,
     artists: mergedTrack.artists,
     album: mergedTrack.album,
@@ -90,44 +101,61 @@ function songPropertiesMapper(mergedTrack: SpotifyApi.AudioFeaturesObject & Omit
     tempo: mergedTrack.tempo,
     time_signature: mergedTrack.time_signature,
     valence: mergedTrack.valence,
-  })
+  };
 }
 
-async function addMySavedTracksToPlaylist(
-  playlistsCreated: { body: SpotifyApi.CreatePlaylistResponse }[],
-  options: { limit: number; offset: number },
-): Promise<SpotifyApi.UsersSavedTracksResponse> {
+type MergedTrack = SpotifyApi.AudioFeaturesObject &
+  Omit<SpotifyApi.TrackObjectFull, 'type'>;
+
+// Function to get saved tracks and their moods
+async function getSavedTracksAndMoods(options: {
+  limit: number;
+  offset: number;
+}): Promise<
+  [
+    Response<SpotifyApi.UsersSavedTracksResponse>,
+    Response<SpotifyApi.MultipleAudioFeaturesResponse>,
+  ]
+> {
   const { limit, offset } = options;
 
-  let savedTracks: Response<SpotifyApi.UsersSavedTracksResponse> = null;
-  let tracksWithMood: Response<SpotifyApi.MultipleAudioFeaturesResponse> = null;
   try {
-    savedTracks = await spotifyApi.getMySavedTracks({
-      limit,
-      offset,
-    });
-    tracksWithMood = await spotifyApi.getAudioFeaturesForTracks(
+    const savedTracks = await spotifyApi.getMySavedTracks({ limit, offset });
+    const tracksWithMood = await spotifyApi.getAudioFeaturesForTracks(
       savedTracks.body.items.map((item) => item.track.id),
     );
+
+    return [savedTracks, tracksWithMood];
   } catch (err) {
     console.log('Error getting saved tracks', err);
     throw err;
   }
+}
 
-  type MergedTrack = SpotifyApi.AudioFeaturesObject & Omit<SpotifyApi.TrackObjectFull, 'type'>
-
-  let aiOrganizedPlaylists = null;
-  const mergedTracksAudioFeaturesWithTracksInfo: (MergedTrack)[] = [];
+// Function to merge saved tracks with their moods
+function mergeSavedTracksWithMoods(
+  savedTracks: Response<SpotifyApi.UsersSavedTracksResponse>,
+  tracksWithMood: Response<SpotifyApi.MultipleAudioFeaturesResponse>,
+): MergedTrack[] {
+  const mergedTracks: MergedTrack[] = [];
 
   for (const savedTrackIndex in savedTracks.body.items) {
-    mergedTracksAudioFeaturesWithTracksInfo.push({
-      ... savedTracks[savedTrackIndex],
+    mergedTracks.push({
+      ...savedTracks[savedTrackIndex],
       ...tracksWithMood.body.audio_features[savedTrackIndex],
     });
   }
 
+  return mergedTracks;
+}
+
+// Function to create the AI-organized playlists
+async function createAIOrganizedPlaylists(
+  playlistsCreated: { body: SpotifyApi.CreatePlaylistResponse }[],
+  mergedTracks: MergedTrack[],
+): Promise<unknown> {
   try {
-    aiOrganizedPlaylists = await createChatCompletion({
+    const aiOrganizedPlaylists = await createChatCompletion({
       messages: [
         {
           content: SUPER_PROMPT,
@@ -137,33 +165,52 @@ async function addMySavedTracksToPlaylist(
           role: 'user',
           content: JSON.stringify({
             playlists: playlistsCreated.map((playlist) => playlist.body),
-            songs: mergedTracksAudioFeaturesWithTracksInfo.map(songPropertiesMapper),
+            songs: mergedTracks.map(songPropertiesMapper),
           }),
         },
       ],
     });
+
+    return JSON.parse(aiOrganizedPlaylists.message.content);
   } catch (err) {
     console.log('Error creating chat completion', err);
     throw err;
   }
+}
 
-  const organizedPlaylists = JSON.parse(aiOrganizedPlaylists.message.content);
-
+// Function to add tracks to Spotify playlists
+async function addTracksToSpotifyPlaylists(
+  organizedPlaylists: { playlists: { id: string; songs: { id: string }[] }[] },
+): Promise<void> {
   try {
     for (const playlist of organizedPlaylists.playlists) {
       const songIds = playlist.songs.map((song) => `spotify:track:${song.id}`);
       await spotifyApi.addTracksToPlaylist(playlist.id, songIds);
     }
-
-    return savedTracks.body;
   } catch (err) {
     console.log('Error adding tracks to playlist', err);
     throw err;
   }
 }
 
+// The main function
+async function addMySavedTracksToPlaylist(
+  playlistsCreated: { body: SpotifyApi.CreatePlaylistResponse }[],
+  options: { limit: number; offset: number },
+): Promise<SpotifyApi.UsersSavedTracksResponse> {
+  const [savedTracks, tracksWithMood] = await getSavedTracksAndMoods(options);
+  const mergedTracks = mergeSavedTracksWithMoods(savedTracks, tracksWithMood);
+  const organizedPlaylists = await createAIOrganizedPlaylists(
+    playlistsCreated,
+    mergedTracks,
+  );
+  await addTracksToSpotifyPlaylists(organizedPlaylists as { playlists: { id: string; songs: { id: string }[] }[] });
+
+  return savedTracks.body;
+}
+
 app.post('/playlist', async (req, res) => {
-  const step = 50;
+  const step = 25;
   try {
     const { body: playlistsToCreate } = req as {
       body: { name: string; description: string }[];
@@ -192,7 +239,6 @@ app.post('/playlist', async (req, res) => {
 
     res.send({ savedCount: offset * step });
   } catch (err) {
-    console.log(err);
     if (err.statusCode === 401) {
       res.redirect('/login');
     }
@@ -212,10 +258,18 @@ app.get('/', async (_req, res) => {
   }
 });
 
+app.get('/logout', (_req, res) => {
+  // Clear the access and refresh tokens from the Spotify API client instance
+  spotifyApi.setAccessToken(null);
+  spotifyApi.setRefreshToken(null);
+
+  // Send a JSON response instead of redirecting
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
 // send the public files back to the client
 app.use(express.static(`${__dirname}/website`));
 
 app.listen(3000, () => {
   console.log('Server is listening on port 3000');
 });
-

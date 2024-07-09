@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 
 const defaultChatChatCompletion = {
-  model: 'gpt-4',
+  model: 'gpt-4o',
   temperature: 0.8,
 };
 
@@ -19,6 +19,9 @@ export async function createChatCompletion({
       messages: messages,
       ...defaultChatChatCompletion,
       ...options,
+      response_format: {
+        type: 'json_object',
+      }
     });
 
     console.log('OpenAI response', response.choices[0].message)
